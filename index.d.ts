@@ -1,6 +1,7 @@
 export function _getVCP (monitorId: string, code: number): number;
 export function _setVCP (monitorId: string, code: number, value: number): void;
 export function _getReport (monitorId: string): string;
+export function _saveCurrentSettings (monitorId: string): boolean;
 export function _refresh (): void;
 
 export function getMonitorList (): string[];
