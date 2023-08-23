@@ -248,6 +248,64 @@ getVCP(const Napi::CallbackInfo& info)
     return ret;
 }
 
+Napi::String
+getReport(const Napi::CallbackInfo& info)
+{
+    Napi::Env env = info.Env();
+
+    if (info.Length() < 1) {
+        throw Napi::TypeError::New(env, "Not enough arguments");
+    }
+    if (!info[0].IsString()) {
+        throw Napi::TypeError::New(env, "Invalid arguments");
+    }
+
+    std::string monitorName = info[0].As<Napi::String>().Utf8Value();
+
+    auto it = handles.find(monitorName);
+    if (it == handles.end()) {
+        throw Napi::Error::New(env, "Monitor not found");
+    }
+
+
+
+
+
+    DWORD cchStringLength = 0;
+    BOOL bSuccess = 0;
+    LPSTR szCapabilitiesString = NULL;
+
+    // Get the length of the string.
+    bSuccess = GetCapabilitiesStringLength(
+    it->second, // Handle to the monitor.
+    &cchStringLength
+    );
+
+    if (bSuccess)
+    {
+        // Allocate the string buffer.
+        LPSTR szCapabilitiesString = (LPSTR)malloc(cchStringLength);
+        if (szCapabilitiesString != NULL)
+        {
+            // Get the capabilities string.
+            bSuccess = CapabilitiesRequestAndCapabilitiesReply(
+                it->second,
+                szCapabilitiesString,
+                cchStringLength
+                );
+
+            std::string s = std::string(szCapabilitiesString);
+            Napi::String ret = Napi::String::New(env, s);
+
+            // Free the string buffer.
+            free(szCapabilitiesString);
+
+            return ret;
+        }
+    }
+}
+
+
 Napi::Object
 Init(Napi::Env env, Napi::Object exports)
 {
@@ -256,6 +314,7 @@ Init(Napi::Env env, Napi::Object exports)
     exports.Set("refresh", Napi::Function::New(env, refresh, "refresh"));
     exports.Set("setVCP", Napi::Function::New(env, setVCP, "setVCP"));
     exports.Set("getVCP", Napi::Function::New(env, getVCP, "getVCP"));
+    exports.Set("getReport", Napi::Function::New(env, getReport, "getReport"));
 
     try {
         populateHandlesMap();
