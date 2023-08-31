@@ -13,9 +13,10 @@
 
 
 std::map<std::string, HANDLE> handles;
+std::map<std::string, std::string> capabilities;
 
 void
-populateHandlesMap()
+populateHandlesMap(bool filterResults)
 {
     // Cleanup
     if (!handles.empty()) {
@@ -24,11 +25,14 @@ populateHandlesMap()
         }
         handles.clear();
     }
-
+    if (!capabilities.empty()) {
+        capabilities.clear();
+    }
 
     struct Monitor {
         HMONITOR handle;
         std::vector<HANDLE> physicalHandles;
+        std::vector<std::string> capabilitiesStrings;
     };
 
     auto monitorEnumProc = [](HMONITOR hMonitor,
@@ -66,8 +70,43 @@ populateHandlesMap()
         }
 
         for (DWORD i = 0; i <= numPhysicalMonitors; i++) {
+
+            /**
+             * Loop through physical monitors, check capabilities,
+             * and only include ones that work.
+             */
+
+            DWORD cchStringLength = 0;
+            BOOL bSuccess = 0;
+            LPSTR szCapabilitiesString = NULL;
+
+            // Get the length of the string.
+            bSuccess = GetCapabilitiesStringLength(
+              physicalMonitors[i].hPhysicalMonitor, // Handle to the monitor.
+              &cchStringLength);
+
+            if (bSuccess != true) {
+                continue; // Does not respond to DDC/CI
+            } else {
+                // Allocate the string buffer.
+                LPSTR szCapabilitiesString = (LPSTR)malloc(cchStringLength);
+                if (szCapabilitiesString != NULL) {
+                    // Get the capabilities string.
+                    bSuccess = CapabilitiesRequestAndCapabilitiesReply(
+                      physicalMonitors[i].hPhysicalMonitor,
+                      szCapabilitiesString,
+                      cchStringLength);
+
+                    monitor.capabilitiesStrings.push_back(
+                      std::string(szCapabilitiesString));
+
+                    // Free the string buffer.
+                    free(szCapabilitiesString);
+                }
+            }
+
             monitor.physicalHandles.push_back(
-              physicalMonitors[(numPhysicalMonitors == 1 ? 0 : i)].hPhysicalMonitor);
+              physicalMonitors[i].hPhysicalMonitor);
         }
 
         delete[] physicalMonitors;
@@ -91,7 +130,7 @@ populateHandlesMap()
                                   EDD_GET_DEVICE_INTERFACE_NAME)) {
 
             // Check valid target
-            if (!(displayDev.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)
+            if (filterResults == true && !(displayDev.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)
                 || displayDev.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER) {
                 continue;
             }
@@ -103,23 +142,25 @@ populateHandlesMap()
 
                 for (size_t i = 0; i < monitor.physicalHandles.size(); i++) {
                     /**
-                     * Re-create DISPLAY_DEVICE.DeviceName with
-                     * MONITORINFOEX.szDevice and monitor index.
+                     * Match DISPLAY_DEVICE with PHYSICAL_MONITOR
+                     * by matching display ID with first handle
                      */
+
                     std::string monitorName =
-                      static_cast<std::string>(monitorInfo.szDevice)
-                      + "\\Monitor" + std::to_string(i);
+                      static_cast<std::string>(monitorInfo.szDevice) + "\\";
 
                     std::string deviceName =
                       static_cast<std::string>(displayDev.DeviceName);
 
                     // Match and store against device ID
-                    if (monitorName == deviceName) {
+                    if (deviceName.rfind(monitorName) == 0) {
                         handles.insert(
                           { static_cast<std::string>(displayDev.DeviceID),
                             monitor.physicalHandles[i] });
-
-                        break;
+                        capabilities.insert(
+                          { static_cast<std::string>(displayDev.DeviceID),
+                            monitor.capabilitiesStrings[i] });
+                            break;
                     }
                 }
             }
@@ -156,8 +197,15 @@ refresh(const Napi::CallbackInfo& info)
 {
     Napi::Env env = info.Env();
 
+    if (info.Length() < 1) {
+        throw Napi::TypeError::New(env, "Not enough arguments");
+    }
+    if (!info[0].IsBoolean()) {
+        throw Napi::TypeError::New(env, "Invalid arguments");
+    }
+
     try {
-        populateHandlesMap();
+        populateHandlesMap(info[0].As<Napi::Boolean>());
     } catch (std::runtime_error& e) {
         throw Napi::Error::New(env, e.what());
     }
@@ -249,7 +297,7 @@ getVCP(const Napi::CallbackInfo& info)
 }
 
 Napi::String
-getReport(const Napi::CallbackInfo& info)
+getCapabilities(const Napi::CallbackInfo& info)
 {
     Napi::Env env = info.Env();
 
@@ -262,47 +310,12 @@ getReport(const Napi::CallbackInfo& info)
 
     std::string monitorName = info[0].As<Napi::String>().Utf8Value();
 
-    auto it = handles.find(monitorName);
-    if (it == handles.end()) {
+    auto it = capabilities.find(monitorName);
+    if (it == capabilities.end()) {
         throw Napi::Error::New(env, "Monitor not found");
     }
 
-
-
-
-
-    DWORD cchStringLength = 0;
-    BOOL bSuccess = 0;
-    LPSTR szCapabilitiesString = NULL;
-
-    // Get the length of the string.
-    bSuccess = GetCapabilitiesStringLength(
-    it->second, // Handle to the monitor.
-    &cchStringLength
-    );
-
-    if (bSuccess)
-    {
-        // Allocate the string buffer.
-        LPSTR szCapabilitiesString = (LPSTR)malloc(cchStringLength);
-        if (szCapabilitiesString != NULL)
-        {
-            // Get the capabilities string.
-            bSuccess = CapabilitiesRequestAndCapabilitiesReply(
-                it->second,
-                szCapabilitiesString,
-                cchStringLength
-                );
-
-            std::string s = std::string(szCapabilitiesString);
-            Napi::String ret = Napi::String::New(env, s);
-
-            // Free the string buffer.
-            free(szCapabilitiesString);
-
-            return ret;
-        }
-    }
+    return Napi::String::New(env, it->second);
 }
 
 
@@ -340,11 +353,11 @@ Init(Napi::Env env, Napi::Object exports)
     exports.Set("refresh", Napi::Function::New(env, refresh, "refresh"));
     exports.Set("setVCP", Napi::Function::New(env, setVCP, "setVCP"));
     exports.Set("getVCP", Napi::Function::New(env, getVCP, "getVCP"));
-    exports.Set("getReport", Napi::Function::New(env, getReport, "getReport"));
+    exports.Set("getCapabilities", Napi::Function::New(env, getCapabilities, "getCapabilities"));
     exports.Set("saveCurrentSettings", Napi::Function::New(env, saveCurrentSettings, "saveCurrentSettings"));
 
     try {
-        populateHandlesMap();
+        populateHandlesMap(true);
     } catch (std::runtime_error& e) {
         throw Napi::Error::New(env, e.what());
     }
