@@ -8,10 +8,26 @@ module.exports = {
 
   , _getVCP: ddcci.getVCP
   , _setVCP: ddcci.setVCP
-  , _getCapabilities: ddcci.getCapabilities
   , _saveCurrentSettings: ddcci.saveCurrentSettings
-  , _refresh: (filterResults = true) => ddcci.refresh(filterResults)
-  , getMonitorList: ddcci.getMonitorList
+  , _getAllMonitors: ddcci.getAllMonitors
+  , _clearDisplayCache: ddcci.clearDisplayCache
+  , _refresh: (method = "accurate") => ddcci.refresh(method)
+  , getMonitorList: (method = "accurate") => { 
+        ddcci.refresh(method);
+        return ddcci.getMonitorList();
+    }
+  , getAllMonitors: (method = "accurate") => { 
+        ddcci.refresh(method);
+        const monitors = ddcci.getAllMonitors();
+        for(const monitor of monitors) {
+            if(monitor.result && monitor.result != "ok" && monitor.result != "invalid") {
+                monitor.capabilities = parseCapabilitiesString(monitor.result);
+                monitor.capabilitiesRaw = monitor.result;
+            }
+            delete monitor.result;
+        }
+        return monitors;
+    }
 
   , getVCP: ddcci.getVCP
   , setVCP: ddcci.setVCP
@@ -51,7 +67,12 @@ module.exports = {
     // Returns an array where keys are valid VCP codes and the keys are an array of accepted values.
     // If the array of accepted values is empty, the VCP code either accepts a range of values or no values. Use getVCP to determine the range, if any.
   , getCapabilities (monitorId) {
-    const report = ddcci.getCapabilities(monitorId);
+    let report = ddcci.getCapabilitiesString(monitorId);
+    return parseCapabilitiesString(report);
+  }
+};
+
+function parseCapabilitiesString(report = "") {
     const start = report.indexOf('vcp('); // Find where VCP list starts
 
     // Only run if VCP list found
@@ -104,6 +125,4 @@ module.exports = {
         return codeList;
     }
     return [];
-  }
-};
-
+}

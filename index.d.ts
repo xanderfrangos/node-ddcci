@@ -2,9 +2,12 @@ export function _getVCP (monitorId: string, code: number): number;
 export function _setVCP (monitorId: string, code: number, value: number): void;
 export function _getCapabilities (monitorId: string): string;
 export function _saveCurrentSettings (monitorId: string): boolean;
-export function _refresh (): void;
+export function _refresh (method: string): void;
+export function _getAllMonitors (): object[];
+export function _clearDisplayCache (): void;
 
-export function getMonitorList (): string[];
+export function getMonitorList (method: string): string[];
+export function getAllMonitors (method: string): object[];
 
 export function getVCP (monitorId: string, code: number): number;
 export function setVCP (monitorId: string, code: number, value: number): void;
